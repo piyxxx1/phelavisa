@@ -1,225 +1,114 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { FilterBar, type FilterState } from './FilterBar';
+import { CountryVisaCard } from './CountryVisaCard';
+import { ALL_VISAS, type VisaDestination } from '../data/visasData';
+import { HiArrowRight } from 'react-icons/hi2';
 
-interface VisaItem {
-  id: string;
-  country: string;
-  category: string;
-  flagCode: string;
-  coverImg: string;
-  visaType: string;
-  processingTime: string;
-  validity: string;
-  stayPeriod: string;
-  price: string;
-  express: boolean;
+const REGIONS = ['All', 'Asia', 'Europe', 'Middle East', 'Americas'];
+
+interface PopularVisasProps {
+  onSelectVisa?: (visa: VisaDestination) => void;
 }
 
-const VISAS_DATA: VisaItem[] = [
-  {
-    id: 'dubai',
-    country: 'United Arab Emirates',
-    category: 'Middle East',
-    flagCode: 'ae',
-    coverImg: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Dubai 30 Days Tourist Visa',
-    processingTime: '24-48 Hours',
-    validity: '60 Days',
-    stayPeriod: '30 Days',
-    price: '₹3,499',
-    express: true,
-  },
-  {
-    id: 'thailand',
-    country: 'Thailand',
-    category: 'Asia',
-    flagCode: 'th',
-    coverImg: 'https://images.unsplash.com/photo-1552465011-b4e21bf6e79a?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Thailand eVisa Express',
-    processingTime: '24-72 Hours',
-    validity: '90 Days',
-    stayPeriod: '60 Days',
-    price: '₹2,199',
-    express: true,
-  },
-  {
-    id: 'singapore',
-    country: 'Singapore',
-    category: 'Asia',
-    flagCode: 'sg',
-    coverImg: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Singapore Tourist e-Visa',
-    processingTime: '3-4 Days',
-    validity: '2 Years (Multiple)',
-    stayPeriod: '30 Days',
-    price: '₹2,899',
-    express: false,
-  },
-  {
-    id: 'vietnam',
-    country: 'Vietnam',
-    category: 'Asia',
-    flagCode: 'vn',
-    coverImg: 'https://images.unsplash.com/photo-1528127269322-539801943592?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Vietnam 30 Days E-Visa',
-    processingTime: '48 Hours',
-    validity: '30 Days',
-    stayPeriod: '30 Days',
-    price: '₹1,899',
-    express: true,
-  },
-  {
-    id: 'malaysia',
-    country: 'Malaysia',
-    category: 'Asia',
-    flagCode: 'my',
-    coverImg: 'https://images.unsplash.com/photo-1596422846543-75c6fc197f07?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Malaysia eVisa / MDAC',
-    processingTime: '24-48 Hours',
-    validity: '3 Months',
-    stayPeriod: '30 Days',
-    price: '₹1,499',
-    express: true,
-  },
-  {
-    id: 'schengen',
-    country: 'France / Schengen',
-    category: 'Europe',
-    flagCode: 'eu',
-    coverImg: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=600&auto=format&fit=crop&q=80',
-    visaType: 'Schengen Short Stay Visa',
-    processingTime: '10-15 Days',
-    validity: 'Up to 90 Days',
-    stayPeriod: '90 Days',
-    price: '₹7,499',
-    express: false,
-  },
-  {
-    id: 'usa',
-    country: 'United States',
-    category: 'Americas',
-    flagCode: 'us',
-    coverImg: 'https://images.unsplash.com/photo-1485871981521-5b1fd3805eee?w=600&auto=format&fit=crop&q=80',
-    visaType: 'USA B1/B2 Visitor Visa',
-    processingTime: 'Appointment Based',
-    validity: '10 Years',
-    stayPeriod: '6 Months',
-    price: '₹14,999',
-    express: false,
-  },
-  {
-    id: 'uk',
-    country: 'United Kingdom',
-    category: 'Europe',
-    flagCode: 'gb',
-    coverImg: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=600&auto=format&fit=crop&q=80',
-    visaType: 'UK Standard Visitor Visa',
-    processingTime: '15 Days',
-    validity: '6 Months',
-    stayPeriod: '180 Days',
-    price: '₹11,499',
-    express: false,
-  },
-];
+export const PopularVisas = ({ onSelectVisa }: PopularVisasProps) => {
+  const [filters, setFilters] = useState<FilterState>({
+    deliveryTime: 'All',
+    type: 'All',
+    documents: 'All',
+    region: 'All',
+  });
 
-const CATEGORIES = ['All', 'Asia', 'Europe', 'Middle East', 'Americas'];
+  const handleFilterChange = (key: keyof FilterState, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  };
 
-export const PopularVisas = () => {
-  const [activeCategory, setActiveCategory] = useState('All');
+  const filteredVisas = useMemo(() => {
+    return ALL_VISAS.filter((v: VisaDestination) => {
+      // Region Filter
+      if (filters.region !== 'All' && v.region !== filters.region) return false;
 
-  const filteredVisas = activeCategory === 'All'
-    ? VISAS_DATA
-    : VISAS_DATA.filter((v) => v.category === activeCategory);
+      // Delivery Time Filter
+      if (filters.deliveryTime !== 'All' && v.deliveryTime !== filters.deliveryTime) return false;
+
+      // Type Filter
+      if (filters.type !== 'All' && v.type !== filters.type) return false;
+
+      // Documents Filter
+      if (filters.documents !== 'All' && v.documents !== filters.documents) return false;
+
+      return true;
+    });
+  }, [filters]);
 
   return (
-    <section id="visas" className="section-padding bg-white">
+    <section id="visas" className="section-padding bg-gray-light">
       <div className="section-container">
-        <div className="section-header">
-          <span className="section-subtitle-tag">Popular Destinations</span>
-          <h2 className="section-main-title">Fast Track Visas for Top Countries</h2>
+        <div className="section-header" style={{ marginBottom: '2.5rem' }}>
+          <span className="section-subtitle-tag">99country Style Visa Finder</span>
+          <h2 className="section-main-title">Fast Track Visas & Real-Time Filter</h2>
           <p className="section-desc">
-            Select your travel destination and complete your application in under 5 minutes with our guided digital process.
+            Filter travel destinations by delivery speed, visa type, documents, and region.
           </p>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="category-pills-bar">
-          {CATEGORIES.map((cat) => (
+        {/* Region Category Pills synced with Region Filter */}
+        <div className="category-pills-bar" style={{ marginBottom: '2rem' }}>
+          {REGIONS.map((cat) => (
             <button
               key={cat}
-              className={`pill-tab ${activeCategory === cat ? 'active' : ''}`}
-              onClick={() => setActiveCategory(cat)}
+              className={`pill-tab ${filters.region === cat ? 'active' : ''}`}
+              onClick={() => handleFilterChange('region', cat)}
             >
               {cat}
             </button>
           ))}
         </div>
 
-        {/* Visas Grid */}
-        <div className="visas-grid">
+        {/* 99country Floating Glass Filter Bar */}
+        <FilterBar
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          resultsCount={filteredVisas.length}
+        />
+
+        {/* Results Summary Subtitle */}
+        <div className="results-count-bar-99">
+          Showing <strong>{filteredVisas.length}</strong> destinations
+        </div>
+
+        {/* 99country Style Visa Cards Grid */}
+        <div className="grid-99country">
           {filteredVisas.map((visa) => (
-            <div key={visa.id} className="visa-card">
-              <div className="visa-card-cover">
-                <img
-                  src={visa.coverImg}
-                  alt={visa.country}
-                  className="visa-cover-img"
-                  loading="lazy"
-                />
-                <div className="visa-cover-gradient"></div>
-
-                <div className="visa-country-badge">
-                  <img
-                    src={`https://flagcdn.com/w40/${visa.flagCode === 'eu' ? 'eu' : visa.flagCode}.png`}
-                    alt={visa.country}
-                    className="visa-flag"
-                  />
-                  <span>{visa.country}</span>
-                </div>
-                {visa.express && <span className="express-tag">Express ⚡</span>}
-              </div>
-
-              <div className="visa-card-body">
-                <h3 className="visa-title">{visa.visaType}</h3>
-
-                <div className="visa-details-list">
-                  <div className="detail-row">
-                    <span className="detail-label">Processing Time:</span>
-                    <span className="detail-value highlight">{visa.processingTime}</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Stay Duration:</span>
-                    <span className="detail-value">{visa.stayPeriod}</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Validity:</span>
-                    <span className="detail-value">{visa.validity}</span>
-                  </div>
-                </div>
-
-                <div className="visa-card-footer">
-                  <div className="price-block">
-                    <span className="price-label">Starting from</span>
-                    <span className="price-amount">{visa.price}</span>
-                  </div>
-
-                  <button className="apply-btn">
-                    Apply Now
-                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
+            <CountryVisaCard key={visa.id} visa={visa} onSelect={onSelectVisa} />
           ))}
         </div>
 
+        {filteredVisas.length === 0 && (
+          <div className="no-results-box" style={{ margin: '2rem 0 3rem' }}>
+            <h3>No Destinations Found</h3>
+            <p>No visas match your selected filter criteria. Try resetting filters.</p>
+            <button
+              className="reset-search-btn"
+              onClick={() => {
+                setFilters({ deliveryTime: 'All', type: 'All', documents: 'All', region: 'All' });
+              }}
+            >
+              Reset Filters
+            </button>
+          </div>
+        )}
+
         <div className="view-all-bar">
-          <button className="view-all-btn">
+          <button
+            className="view-all-btn"
+            onClick={() => {
+              window.history.pushState(null, '', '/visas');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          >
             Explore All 150+ Visas
-            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-            </svg>
+            <HiArrowRight size={18} />
           </button>
         </div>
       </div>

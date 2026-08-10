@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { HiChevronDown } from 'react-icons/hi2';
 
 const FAQS_DATA = [
   {
@@ -64,9 +65,7 @@ export const FAQ = () => {
                 >
                   <span className="faq-q-text">{faq.q}</span>
                   <span className="faq-icon-wrapper">
-                    <svg className={`faq-chevron ${isOpen ? 'rotate' : ''}`} width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"></path>
-                    </svg>
+                    <HiChevronDown className={`faq-chevron ${isOpen ? 'rotate' : ''}`} size={20} />
                   </span>
                 </button>
                 {isOpen && (

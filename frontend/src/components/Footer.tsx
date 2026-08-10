@@ -1,3 +1,6 @@
+import { HiEnvelope } from 'react-icons/hi2';
+import { FaFacebookF, FaInstagram, FaLinkedinIn } from 'react-icons/fa6';
+
 export const Footer = () => {
   return (
     <footer className="main-footer">
@@ -13,9 +16,7 @@ export const Footer = () => {
             </p>
             <div className="footer-address">
               <div className="address-item">
-                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                </svg>
+                <HiEnvelope size={18} style={{ color: '#22c55e' }} />
                 <span>info@phelavisa.com</span>
               </div>
             </div>
@@ -26,7 +27,6 @@ export const Footer = () => {
             <h4 className="footer-heading">Services & Links</h4>
             <ul className="footer-list">
               <li><a href="#visas">Visa Services</a></li>
-              <li><a href="#tours">International Tour Packages</a></li>
               <li><a href="#apostille">Apostille Services</a></li>
               <li><a href="#attestation">Document Attestation</a></li>
               <li><a href="#faqs">Frequently Asked Questions</a></li>
@@ -67,13 +67,13 @@ export const Footer = () => {
           <p>© {new Date().getFullYear()} Pehla Visa. All rights reserved.</p>
           <div className="social-links">
             <a href="https://facebook.com" aria-label="Facebook" target="_blank" rel="noreferrer">
-              <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z"></path></svg>
+              <FaFacebookF size={18} />
             </a>
             <a href="https://instagram.com" aria-label="Instagram" target="_blank" rel="noreferrer">
-              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1112.63 8 4 4 0 0116 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+              <FaInstagram size={18} />
             </a>
             <a href="https://linkedin.com" aria-label="LinkedIn" target="_blank" rel="noreferrer">
-              <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2 2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z"></path><circle cx="4" cy="4" r="2"></circle></svg>
+              <FaLinkedinIn size={18} />
             </a>
           </div>
         </div>
