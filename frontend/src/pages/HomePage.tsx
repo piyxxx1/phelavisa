@@ -12,7 +12,7 @@ interface HomePageProps {
 export const HomePage = ({ onSelectVisa }: HomePageProps) => {
   return (
     <>
-      <Hero />
+      <Hero onSelectVisa={onSelectVisa} />
       <PopularVisas onSelectVisa={onSelectVisa} />
       <Testimonials />
       <WhyChooseUs />

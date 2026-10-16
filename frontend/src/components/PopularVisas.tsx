@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { FilterBar, type FilterState } from './FilterBar';
 import { CountryVisaCard } from './CountryVisaCard';
-import { ALL_VISAS, type VisaDestination } from '../data/visasData';
+import type { VisaDestination } from '../data/visasData';
 import { HiArrowRight } from 'react-icons/hi2';
+import { API_BASE_URL } from '../config/apiConfig';
 
 const REGIONS = ['All', 'Asia', 'Europe', 'Middle East', 'Americas'];
 
@@ -11,6 +12,7 @@ interface PopularVisasProps {
 }
 
 export const PopularVisas = ({ onSelectVisa }: PopularVisasProps) => {
+  const [visas, setVisas] = useState<VisaDestination[]>([]);
   const [filters, setFilters] = useState<FilterState>({
     deliveryTime: 'All',
     type: 'All',
@@ -18,33 +20,88 @@ export const PopularVisas = ({ onSelectVisa }: PopularVisasProps) => {
     region: 'All',
   });
 
+  useEffect(() => {
+    async function loadVisas() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/visas`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setVisas(data);
+          }
+        }
+      } catch (err) {
+        console.warn('Frontend API visas fetch warning:', err);
+      }
+    }
+    loadVisas();
+  }, []);
+
   const handleFilterChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
   const filteredVisas = useMemo(() => {
-    return ALL_VISAS.filter((v: VisaDestination) => {
+    return visas.filter((v: VisaDestination) => {
       // Region Filter
-      if (filters.region !== 'All' && v.region !== filters.region) return false;
+      if (filters.region !== 'All') {
+        const regionMatch = v.region === filters.region || (v.regionTags && v.regionTags.includes(filters.region));
+        if (!regionMatch) return false;
+      }
 
       // Delivery Time Filter
-      if (filters.deliveryTime !== 'All' && v.deliveryTime !== filters.deliveryTime) return false;
+      if (filters.deliveryTime !== 'All') {
+        const targetDelivery = filters.deliveryTime.toLowerCase().trim();
+        const vDelivery = (v.deliveryTime || '').toLowerCase().trim();
+        const vGetBy = (v.getBy || '').toLowerCase().trim();
+        const hasTagMatch = v.deliveryTimeTags?.some((t) => t.toLowerCase().trim().includes(targetDelivery) || targetDelivery.includes(t.toLowerCase().trim()));
+
+        if (!vDelivery.includes(targetDelivery) && !targetDelivery.includes(vDelivery) && !vGetBy.includes(targetDelivery) && !hasTagMatch) {
+          return false;
+        }
+      }
 
       // Type Filter
-      if (filters.type !== 'All' && v.type !== filters.type) return false;
+      if (filters.type !== 'All') {
+        const rawTarget = filters.type.toLowerCase().trim();
+        const normTarget = rawTarget.replace(/[^a-z0-9]/g, '');
+        const vType = (v.type || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const vCategory = (v.visaCategory || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        const hasTagMatch = v.typeTags?.some((t) => {
+          const normT = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return normT.includes(normTarget) || normTarget.includes(normT);
+        });
+
+        const hasCustomCategoryMatch = v.customCategories?.some((c) => {
+          const normC = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return normC.includes(normTarget) || normTarget.includes(normC);
+        });
+
+        if (!vType.includes(normTarget) && !normTarget.includes(vType) && !vCategory.includes(normTarget) && !normTarget.includes(vCategory) && !hasCustomCategoryMatch && !hasTagMatch) {
+          return false;
+        }
+      }
 
       // Documents Filter
-      if (filters.documents !== 'All' && v.documents !== filters.documents) return false;
+      if (filters.documents !== 'All') {
+        const targetDoc = filters.documents.toLowerCase().trim();
+        const vDoc = (v.documents || '').toLowerCase().trim();
+        const hasTagMatch = v.documentsTags?.some((t) => t.toLowerCase().trim().includes(targetDoc) || targetDoc.includes(t.toLowerCase().trim()));
+
+        if (!vDoc.includes(targetDoc) && !targetDoc.includes(vDoc) && !hasTagMatch) {
+          return false;
+        }
+      }
 
       return true;
     });
-  }, [filters]);
+  }, [visas, filters]);
 
   return (
     <section id="visas" className="section-padding bg-gray-light">
       <div className="section-container">
         <div className="section-header" style={{ marginBottom: '2.5rem' }}>
-          <span className="section-subtitle-tag">99country Style Visa Finder</span>
           <h2 className="section-main-title">Fast Track Visas & Real-Time Filter</h2>
           <p className="section-desc">
             Filter travel destinations by delivery speed, visa type, documents, and region.

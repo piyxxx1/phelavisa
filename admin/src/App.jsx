@@ -1,122 +1,139 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { AdminProvider, useAdmin } from './context/AdminContext';
+import { AdminLayout } from './components/AdminLayout';
+import { AdminLoginPage } from './pages/AdminLoginPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AdminVisasPage } from './pages/AdminVisasPage';
+import { AdminVisaEditPage } from './pages/AdminVisaEditPage';
+import { AdminApplicationsPage } from './pages/AdminApplicationsPage';
+import { AdminB2BPage } from './pages/AdminB2BPage';
+import { AdminReviewsPage } from './pages/AdminReviewsPage';
+import { AdminDummyTicketsPage } from './pages/AdminDummyTicketsPage';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+const ProtectedAdminRoute = ({ children }) => {
+  const { adminUser } = useAdmin();
+  if (!adminUser) {
+    return <Navigate to="/login" replace />;
+  }
+  return <AdminLayout>{children}</AdminLayout>;
+};
+
+const AdminMainRouter = () => {
+  const { adminUser } = useAdmin();
+  const navigate = useNavigate();
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          adminUser ? (
+            <Navigate to="/" replace />
+          ) : (
+            <AdminLoginPage onLoginSuccess={() => navigate('/')} />
+          )
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <ProtectedAdminRoute>
+            <AdminDashboardPage
+              onNavigateTab={(tab) => {
+                if (tab === 'visas-new') navigate('/newvisa');
+                else navigate(`/${tab === 'dashboard' ? '' : tab}`);
+              }}
+              onEditVisa={(visaId) => navigate(`/visas/edit/${visaId}`)}
+            />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/visas"
+        element={
+          <ProtectedAdminRoute>
+            <AdminVisasPage
+              onNavigateNewVisa={() => navigate('/newvisa')}
+              onEditVisa={(visaId) => navigate(`/visas/edit/${visaId}`)}
+            />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/newvisa"
+        element={
+          <ProtectedAdminRoute>
+            <AdminVisaEditPage
+              onBack={() => navigate('/visas')}
+              onSavedSuccess={() => navigate('/visas')}
+            />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route path="/visas/new" element={<Navigate to="/newvisa" replace />} />
+      <Route path="/visas/newvisa" element={<Navigate to="/newvisa" replace />} />
+      <Route
+        path="/visas/edit/:visaId"
+        element={
+          <ProtectedAdminRoute>
+            <AdminVisaEditPage
+              onBack={() => navigate('/visas')}
+              onSavedSuccess={() => navigate('/visas')}
+            />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/applications"
+        element={
+          <ProtectedAdminRoute>
+            <AdminApplicationsPage />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/applications/:appId"
+        element={
+          <ProtectedAdminRoute>
+            <AdminApplicationsPage />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/b2b"
+        element={
+          <ProtectedAdminRoute>
+            <AdminB2BPage />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/reviews"
+        element={
+          <ProtectedAdminRoute>
+            <AdminReviewsPage />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="/dummy-tickets"
+        element={
+          <ProtectedAdminRoute>
+            <AdminDummyTicketsPage />
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route path="/settings" element={<Navigate to="/b2b" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+};
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+export default function App() {
+  return (
+    <AdminProvider>
+      <AdminMainRouter />
+    </AdminProvider>
+  );
 }
-
-export default App

@@ -1,6 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { VisaDestination } from '../data/visasData';
 import type { UserProfile } from './LoginPage';
+import { API_BASE_URL } from '../config/apiConfig';
+import { calculateCategoryTotal, getStartingPrice } from '../utils/pricingUtils';
 import {
   HiArrowLeft,
   HiCheckCircle,
@@ -20,6 +22,7 @@ import {
   HiXMark,
   HiUser,
   HiChevronRight,
+  HiDocumentText,
 } from 'react-icons/hi2';
 
 interface VisaDetailPageProps {
@@ -39,31 +42,197 @@ export const VisaDetailPage = ({
   onNavigateVisas,
   onStartApplication,
 }: VisaDetailPageProps) => {
-  const [activeDocTab, setActiveDocTab] = useState<'mandatory' | 'financial' | 'travel'>('mandatory');
+  const [currentVisa, setCurrentVisa] = useState<VisaDestination>(visa);
   const [travelersCount, setTravelersCount] = useState<number>(1);
   const [selectedVariant, setSelectedVariant] = useState<string>('tourist');
   const [isLoginRequiredModalOpen, setIsLoginRequiredModalOpen] = useState<boolean>(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
 
+  // Live Sync with Backend Endpoint /api/visas/:id
+  useEffect(() => {
+    setCurrentVisa(visa);
+    let isMounted = true;
+    async function fetchLiveVisaEndpoint() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/visas/${visa.id}`);
+        if (res.ok) {
+          const freshData = await res.json();
+          if (isMounted && freshData && freshData.id) {
+            setCurrentVisa(freshData);
+          }
+        }
+      } catch (err) {
+        console.warn('VisaDetailPage live endpoint fetch:', err);
+      }
+    }
+    fetchLiveVisaEndpoint();
+    return () => {
+      isMounted = false;
+    };
+  }, [visa.id, visa]);
+
+  // Categories List configured from Admin (Custom or Default) with verified calculation
+  const categoriesList = useMemo(() => {
+    if (currentVisa.customCategories && currentVisa.customCategories.length > 0) {
+      return currentVisa.customCategories.map((c) => {
+        const { formattedTotal } = calculateCategoryTotal(c.visaPrice, c.ourCharges, c.taxRate);
+        return {
+          ...c,
+          price: formattedTotal,
+        };
+      });
+    }
+
+    // Fallback for legacy database records
+    const legacyMap: Record<string, { name: string; badge: string; defaultVisa: string; defaultOur: string; defaultTax: string }> = {
+      tourist: { name: 'Tourist Visa', badge: 'Standard Process', defaultVisa: '₹3,500', defaultOur: '₹999', defaultTax: '₹499 (18% GST)' },
+      express: { name: 'Express eVisa', badge: '⚡ 24h Fast Track', defaultVisa: '₹5,500', defaultOur: '₹1,499', defaultTax: '₹999 (18% GST)' },
+      business: { name: 'Business Visa', badge: '1 Year Multiple', defaultVisa: '₹10,500', defaultOur: '₹2,499', defaultTax: '₹1,999 (18% GST)' },
+    };
+    const availableKeys = currentVisa.availableCategories && currentVisa.availableCategories.length > 0
+      ? currentVisa.availableCategories
+      : ['tourist', 'express', 'business'];
+
+    return availableKeys.map((key) => {
+      const cp = currentVisa.categoryPricing?.[key as 'tourist' | 'express' | 'business'];
+      const info = legacyMap[key] || { name: key.toUpperCase(), badge: 'Standard', defaultVisa: '₹3,500', defaultOur: '₹999', defaultTax: '₹499' };
+      const vP = cp?.visaPrice || (key === 'tourist' ? currentVisa.visaPrice : info.defaultVisa) || '₹3,500';
+      const oC = cp?.ourCharges || (key === 'tourist' ? currentVisa.ourCharges : info.defaultOur) || '₹999';
+      const tR = cp?.taxRate || (key === 'tourist' ? currentVisa.taxRate : info.defaultTax) || '₹499 (18% GST)';
+      const { formattedTotal } = calculateCategoryTotal(vP, oC, tR);
+
+      return {
+        id: key,
+        name: info.name,
+        badge: info.badge,
+        price: formattedTotal,
+        visaPrice: vP,
+        ourCharges: oC,
+        taxRate: tR,
+      };
+    });
+  }, [currentVisa]);
+
+  useEffect(() => {
+    if (categoriesList.length > 0 && !categoriesList.some((c) => c.id === selectedVariant)) {
+      setSelectedVariant(categoriesList[0].id);
+    }
+  }, [categoriesList, selectedVariant]);
+
   // Login Modal Form states
   const [quickLoginName, setQuickLoginName] = useState('');
   const [quickLoginPhone, setQuickLoginPhone] = useState('');
 
-  // Calculate pricing
-  const basePriceNum = useMemo(() => {
-    const cleanNum = parseInt(visa.price.replace(/[^0-9]/g, ''), 10);
-    return isNaN(cleanNum) ? 4999 : cleanNum;
-  }, [visa.price]);
+  const selectedCategoryObj = useMemo(() => {
+    return categoriesList.find((c) => c.id === selectedVariant) || categoriesList[0];
+  }, [categoriesList, selectedVariant]);
 
-  const variantMultiplier = selectedVariant === 'express' ? 1.3 : selectedVariant === 'business' ? 1.5 : 1;
-  const totalPrice = Math.round(basePriceNum * variantMultiplier * travelersCount);
+  // 1. Filter documents specifically for the selected category option (e.g. Tourist, Express, Business)
+  const variantScopedDocuments = useMemo(() => {
+    if (!currentVisa.docChecklist || currentVisa.docChecklist.length === 0) return [];
+
+    const activeId = selectedVariant.toLowerCase().trim();
+    const activeName = (selectedCategoryObj?.name || '').toLowerCase().trim();
+
+    return currentVisa.docChecklist.filter((d) => {
+      const docCat = (d.forVisaCategory || 'all').toLowerCase().trim();
+
+      // If document is marked for 'all', it applies to every category
+      if (docCat === 'all') return true;
+
+      // Match document category ID or Name
+      if (docCat === activeId) return true;
+      if (activeName && docCat === activeName) return true;
+
+      // Handle variant string matching
+      if (activeId.includes(docCat) || docCat.includes(activeId)) return true;
+
+      return false;
+    });
+  }, [currentVisa.docChecklist, selectedVariant, selectedCategoryObj]);
+
+  // 2. Dynamic Group Categories extracted from variantScopedDocuments
+  const documentCategories = useMemo(() => {
+    if (variantScopedDocuments.length === 0) return [];
+    const cats = Array.from(new Set(variantScopedDocuments.map((d) => d.category || 'Passport & ID')));
+    return cats;
+  }, [variantScopedDocuments]);
+
+  const [activeDocCategory, setActiveDocCategory] = useState<string>('');
+
+  useEffect(() => {
+    if (documentCategories.length > 0 && !documentCategories.includes(activeDocCategory)) {
+      setActiveDocCategory(documentCategories[0]);
+    }
+  }, [documentCategories, activeDocCategory]);
+
+  const currentCategoryDocs = useMemo(() => {
+    if (variantScopedDocuments.length === 0) return [];
+    return variantScopedDocuments.filter((d) => (d.category || 'Passport & ID') === activeDocCategory);
+  }, [variantScopedDocuments, activeDocCategory]);
+
+  // Dynamic Key Specifications renderer helper - STRICTLY 4 Core Specifications
+  const displayKeySpecs = useMemo(() => {
+    return [
+      { id: 'ks-1', label: 'Processing Time', value: currentVisa.processingTime || '5-7 Days', icon: 'clock' },
+      { id: 'ks-2', label: 'Stay Duration', value: currentVisa.stayPeriod || '30 Days', icon: 'calendar' },
+      { id: 'ks-3', label: 'Visa Validity', value: currentVisa.validity || '180 Days', icon: 'document' },
+      { id: 'ks-4', label: 'Entry Type', value: currentVisa.entryType || 'Single Entry', icon: 'id' },
+    ];
+  }, [currentVisa.processingTime, currentVisa.stayPeriod, currentVisa.validity, currentVisa.entryType]);
+
+  const getSpecIconConfig = (iconName?: string, index: number = 0) => {
+    const colors = ['blue', 'green', 'yellow', 'purple', 'indigo', 'rose'];
+    const colorClass = colors[index % colors.length];
+
+    switch (iconName) {
+      case 'clock':
+        return { icon: <HiClock />, colorClass };
+      case 'calendar':
+        return { icon: <HiCalendarDays />, colorClass };
+      case 'document':
+        return { icon: <HiDocumentCheck />, colorClass };
+      case 'id':
+        return { icon: <HiIdentification />, colorClass };
+      case 'shield':
+        return { icon: <HiShieldCheck />, colorClass };
+      case 'bolt':
+        return { icon: <HiBolt />, colorClass };
+      case 'check':
+        return { icon: <HiCheckCircle />, colorClass };
+      default:
+        return { icon: <HiCheckCircle />, colorClass };
+    }
+  };
+
+  // Calculate per-variant pricing from database categoriesList
+  const currentPricing = useMemo(() => {
+    const found = categoriesList.find((c) => c.id === selectedVariant) || categoriesList[0];
+    const { vP, oC, tR, total, formattedTotal } = calculateCategoryTotal(
+      found?.visaPrice,
+      found?.ourCharges,
+      found?.taxRate
+    );
+    return {
+      id: found?.id || 'tourist',
+      name: found?.name || 'Tourist Visa',
+      badge: found?.badge || 'Standard Process',
+      price: formattedTotal,
+      visaPrice: `₹${vP.toLocaleString('en-IN')}`,
+      ourCharges: `₹${oC.toLocaleString('en-IN')}`,
+      taxRate: `₹${tR.toLocaleString('en-IN')}`,
+      rawTotal: total,
+    };
+  }, [categoriesList, selectedVariant]);
+
+  const totalPrice = currentPricing.rawTotal * travelersCount;
 
   // Click Handler for "Apply For Visa" Button
   const handleApplyButtonClick = () => {
     if (!user) {
       setIsLoginRequiredModalOpen(true);
     } else {
-      onStartApplication(visa, travelersCount, selectedVariant);
+      onStartApplication(currentVisa, travelersCount, selectedVariant);
     }
   };
 
@@ -75,7 +244,7 @@ export const VisaDetailPage = ({
     };
     onLoginSuccess(newUser);
     setIsLoginRequiredModalOpen(false);
-    onStartApplication(visa, travelersCount, selectedVariant);
+    onStartApplication(currentVisa, travelersCount, selectedVariant);
   };
 
   const handleModalCustomLogin = (e: React.FormEvent) => {
@@ -88,19 +257,19 @@ export const VisaDetailPage = ({
     };
     onLoginSuccess(newUser);
     setIsLoginRequiredModalOpen(false);
-    onStartApplication(visa, travelersCount, selectedVariant);
+    onStartApplication(currentVisa, travelersCount, selectedVariant);
   };
 
   // Reusable Pricing & Fee Component
   const renderPricingCard = () => (
     <div className="sticky-pricing-card">
       <div className="pricing-header-banner">
-        <span className="starting-label">Total Visa Fee</span>
+        <span className="starting-label">{currentPricing.name} Total Fee</span>
         <div className="price-big-display">
           ₹{totalPrice.toLocaleString('en-IN')}
-          <span className="price-unit">/ total</span>
+          <span className="price-unit">/ {travelersCount > 1 ? `${travelersCount} travelers` : 'applicant'}</span>
         </div>
-        <span className="price-tax-note">Govt Fee + Taxes Included</span>
+        <span className="price-tax-note">{currentVisa.feeLabel || 'Govt Fee'} + Taxes Included</span>
       </div>
 
       <div className="pricing-options-body">
@@ -116,33 +285,39 @@ export const VisaDetailPage = ({
           </div>
         )}
 
-        {/* Select Visa Variant */}
-        <div className="sidebar-field-group">
-          <label className="sidebar-label">Select Visa Category</label>
-          <div className="variant-radio-grid">
-            <button
-              className={`variant-btn ${selectedVariant === 'tourist' ? 'active' : ''}`}
-              onClick={() => setSelectedVariant('tourist')}
-            >
-              <span>Tourist Visa</span>
-              <span className="variant-badge">Standard</span>
-            </button>
-            <button
-              className={`variant-btn ${selectedVariant === 'express' ? 'active' : ''}`}
-              onClick={() => setSelectedVariant('express')}
-            >
-              <span>Express eVisa</span>
-              <span className="variant-badge highlight">⚡ 24h</span>
-            </button>
-            <button
-              className={`variant-btn ${selectedVariant === 'business' ? 'active' : ''}`}
-              onClick={() => setSelectedVariant('business')}
-            >
-              <span>Business Visa</span>
-              <span className="variant-badge">1 Year</span>
-            </button>
+        {/* Dynamic Visa Category Selection Buttons */}
+        {categoriesList.length > 0 && (
+          <div className="sidebar-field-group">
+            <label className="sidebar-label">Select Visa Category Option</label>
+            <div className="variant-radio-grid">
+              {categoriesList.map((cat) => {
+                const { formattedTotal } = calculateCategoryTotal(cat.visaPrice, cat.ourCharges, cat.taxRate);
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    className={`variant-btn ${selectedVariant === cat.id ? 'active' : ''}`}
+                    onClick={() => setSelectedVariant(cat.id)}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: '0.2rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 700 }}>{cat.name}</span>
+                      <span className="variant-badge">{cat.badge || 'Standard'}</span>
+                    </div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: selectedVariant === cat.id ? '#2563eb' : '#475569' }}>
+                      {formattedTotal}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Number of Travelers Counter */}
         <div className="sidebar-field-group">
@@ -164,12 +339,33 @@ export const VisaDetailPage = ({
           </div>
         </div>
 
+        {/* 3-Column Pricing Breakdown Matching Selected Variant */}
+        <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '0.75rem', border: '1px solid #e2e8f0', margin: '1rem 0' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {currentPricing.name.toUpperCase()} FEE BREAKDOWN:
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.4rem', textAlign: 'center' }}>
+            <div style={{ background: '#ffffff', padding: '0.4rem', borderRadius: '0.4rem', border: '1px solid #cbd5e1' }}>
+              <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block' }}>{currentVisa.feeLabel || 'Govt Visa Fee'}</span>
+              <strong style={{ fontSize: '0.8rem', color: '#0f172a' }}>{currentPricing.visaPrice}</strong>
+            </div>
+            <div style={{ background: '#ffffff', padding: '0.4rem', borderRadius: '0.4rem', border: '1px solid #cbd5e1' }}>
+              <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block' }}>Our Charges</span>
+              <strong style={{ fontSize: '0.8rem', color: '#0f172a' }}>{currentPricing.ourCharges}</strong>
+            </div>
+            <div style={{ background: '#ffffff', padding: '0.4rem', borderRadius: '0.4rem', border: '1px solid #cbd5e1' }}>
+              <span style={{ fontSize: '0.65rem', color: '#64748b', display: 'block' }}>Tax / GST</span>
+              <strong style={{ fontSize: '0.8rem', color: '#0f172a' }}>{currentPricing.taxRate}</strong>
+            </div>
+          </div>
+        </div>
+
         {/* Apply Now Primary CTA */}
         <button
           className="apply-primary-btn"
           onClick={handleApplyButtonClick}
         >
-          <span className="apply-btn-text">Apply for {visa.country} Visa</span>
+          <span className="apply-btn-text">Apply for {currentVisa.country} Visa</span>
           <HiArrowRight size={18} style={{ flexShrink: 0 }} />
         </button>
 
@@ -195,7 +391,7 @@ export const VisaDetailPage = ({
   return (
     <div className="visa-detail-page-wrapper">
       {/* Top Banner / Breadcrumb Header */}
-      <section className="detail-hero-banner" style={{ backgroundImage: `url(${visa.coverImg})` }}>
+      <section className="detail-hero-banner" style={{ backgroundImage: `url(${currentVisa.coverImg})` }}>
         <div className="detail-hero-overlay"></div>
         <div className="detail-hero-container">
           {/* Breadcrumb & Back Action */}
@@ -209,7 +405,7 @@ export const VisaDetailPage = ({
               <HiChevronRight size={12} className="bc-sep" />
               <span onClick={onNavigateVisas} className="bc-link">Visas</span>
               <HiChevronRight size={12} className="bc-sep" />
-              <span className="bc-current">{visa.country}</span>
+              <span className="bc-current">{currentVisa.country}</span>
             </div>
           </div>
 
@@ -217,30 +413,30 @@ export const VisaDetailPage = ({
           <div className="detail-hero-main">
             <div className="detail-flag-badge-box">
               <img
-                src={`https://flagcdn.com/w80/${visa.flagCode === 'eu' ? 'eu' : visa.flagCode}.png`}
-                alt={visa.country}
+                src={`https://flagcdn.com/w80/${(currentVisa.flagCode || 'fr').toLowerCase()}.png`}
+                alt={currentVisa.country}
                 className="detail-flag-img"
               />
-              <span className="detail-country-tag">{visa.region} • {visa.visaCategory}</span>
+              <span className="detail-country-tag">{currentVisa.region} • {currentVisa.visaCategory}</span>
             </div>
 
-            <h1 className="detail-page-title">{visa.country} Visa Online</h1>
+            <h1 className="detail-page-title">{currentVisa.country} Visa Online</h1>
             <p className="detail-page-subtitle">
-              Get your {visa.title} fast with India's #1 trusted visa platform. 100% verified documentation & guaranteed on-time processing.
+              Get your {currentVisa.title} fast with India's #1 trusted visa platform. 100% verified documentation & guaranteed on-time processing.
             </p>
 
             <div className="detail-guarantee-pills">
               <span className="guarantee-pill green">
                 <HiCheckCircle size={16} />
-                99.4% High Approval Rate
+                Starting at {getStartingPrice(currentVisa)}
               </span>
               <span className="guarantee-pill blue">
                 <HiBolt size={16} />
-                Turnaround: {visa.processingTime}
+                Turnaround: {currentVisa.processingTime}
               </span>
               <span className="guarantee-pill yellow">
                 <HiShieldCheck size={16} />
-                Verified Embassy Process
+                Approval Rate 99.4%
               </span>
             </div>
           </div>
@@ -261,154 +457,86 @@ export const VisaDetailPage = ({
             <div className="metrics-specs-card">
               <h2 className="specs-card-title">Visa Key Specifications</h2>
               <div className="specs-grid">
-                <div className="spec-box">
-                  <div className="spec-icon blue"><HiClock /></div>
-                  <div className="spec-info">
-                    <span className="spec-label">Processing Time</span>
-                    <span className="spec-val">{visa.processingTime}</span>
-                  </div>
-                </div>
-
-                <div className="spec-box">
-                  <div className="spec-icon green"><HiCalendarDays /></div>
-                  <div className="spec-info">
-                    <span className="spec-label">Stay Duration</span>
-                    <span className="spec-val">{visa.stayPeriod}</span>
-                  </div>
-                </div>
-
-                <div className="spec-box">
-                  <div className="spec-icon yellow"><HiDocumentCheck /></div>
-                  <div className="spec-info">
-                    <span className="spec-label">Visa Validity</span>
-                    <span className="spec-val">{visa.validity}</span>
-                  </div>
-                </div>
-
-                <div className="spec-box">
-                  <div className="spec-icon purple"><HiIdentification /></div>
-                  <div className="spec-info">
-                    <span className="spec-label">Entry Type</span>
-                    <span className="spec-val">{visa.entryType}</span>
-                  </div>
-                </div>
+                {displayKeySpecs.map((spec, idx) => {
+                  const { icon, colorClass } = getSpecIconConfig(spec.icon, idx);
+                  return (
+                    <div key={spec.id || idx} className="spec-box">
+                      <div className={`spec-icon ${colorClass}`}>{icon}</div>
+                      <div className="spec-info">
+                        <span className="spec-label">{spec.label}</span>
+                        <span className="spec-val">{spec.value}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             {/* 2. Documents Required Checklist */}
             <div className="detail-section-block">
               <span className="detail-section-tag">Requirements Checklist</span>
-              <h2 className="detail-section-heading">Documents Required for {visa.country} Visa</h2>
+              <h2 className="detail-section-heading">Documents Required for {currentVisa.country} ({currentPricing.name})</h2>
               
-              <div className="docs-tab-navigation">
-                <button
-                  className={`doc-tab-btn ${activeDocTab === 'mandatory' ? 'active' : ''}`}
-                  onClick={() => setActiveDocTab('mandatory')}
-                >
-                  Passport & ID
-                </button>
-                <button
-                  className={`doc-tab-btn ${activeDocTab === 'financial' ? 'active' : ''}`}
-                  onClick={() => setActiveDocTab('financial')}
-                >
-                  Bank & Employment
-                </button>
-                <button
-                  className={`doc-tab-btn ${activeDocTab === 'travel' ? 'active' : ''}`}
-                  onClick={() => setActiveDocTab('travel')}
-                >
-                  Flight & Hotel
-                </button>
-              </div>
+              {variantScopedDocuments.length > 0 ? (
+                <>
+                  <div className="docs-tab-navigation">
+                    {documentCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={`doc-tab-btn ${activeDocCategory === cat ? 'active' : ''}`}
+                        onClick={() => setActiveDocCategory(cat)}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
 
-              <div className="docs-checklist-container">
-                {activeDocTab === 'mandatory' && (
-                  <ul className="docs-check-list">
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Original Passport:</strong> Valid for at least 6 months beyond intended stay with minimum 2 blank pages.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Passport Size Photographs:</strong> 2 recent color photos (35x45mm, white background, 80% face view).
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>National ID / PAN Card:</strong> Scanned front and back copy of Indian PAN Card or Aadhaar.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Visa Application Form:</strong> Duly completed and signed visa application form.
-                      </div>
-                    </li>
-                  </ul>
-                )}
-
-                {activeDocTab === 'financial' && (
-                  <ul className="docs-check-list">
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Bank Statement:</strong> Updated original bank account statement for the last 6 months with bank seal & signature.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Salary Slips / Income Proof:</strong> Salary slips for the last 3 months (for employed applicants).
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>ITR Returns:</strong> Income Tax Returns (ITR-V) for the last 2 financial years.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Leave Sanction Letter:</strong> Approved leave letter from employer on official company letterhead.
-                      </div>
-                    </li>
-                  </ul>
-                )}
-
-                {activeDocTab === 'travel' && (
-                  <ul className="docs-check-list">
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Flight Tickets:</strong> Confirmed round-trip flight ticket reservations.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Hotel Reservation:</strong> Confirmed hotel booking confirmation for the entire duration of stay.
-                      </div>
-                    </li>
-                    <li>
-                      <span className="check-icon"><HiCheck /></span>
-                      <div>
-                        <strong>Day-wise Travel Itinerary:</strong> Detailed day-by-day travel plan detailing places to visit.
-                      </div>
-                    </li>
-                  </ul>
-                )}
-              </div>
+                  <div className="docs-checklist-container">
+                    <ul className="docs-check-list">
+                      {currentCategoryDocs.map((doc) => (
+                        <li key={doc.id || doc.title} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                          <span className="check-icon" style={{ marginTop: '0.2rem' }}><HiCheck /></span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem', flexWrap: 'wrap' }}>
+                              <strong style={{ color: '#0f172a', fontSize: '0.95rem' }}>{doc.title}</strong>
+                              <span
+                                style={{
+                                  fontSize: '0.7rem',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '0.25rem',
+                                  fontWeight: 700,
+                                  background: doc.isRequired !== false ? '#fee2e2' : '#e0f2fe',
+                                  color: doc.isRequired !== false ? '#991b1b' : '#0369a1',
+                                }}
+                              >
+                                {doc.isRequired !== false ? 'Mandatory' : 'Optional'}
+                              </span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.825rem', color: '#64748b' }}>
+                              {doc.description || 'Required for visa application processing.'}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              ) : (
+                <div style={{ background: '#f8fafc', padding: '1.75rem', borderRadius: '0.75rem', border: '1px dashed #cbd5e1', textAlign: 'center', margin: '1.25rem 0' }}>
+                  <HiDocumentText size={32} style={{ color: '#94a3b8', marginBottom: '0.5rem' }} />
+                  <h4 style={{ margin: 0, color: '#334155', fontSize: '1rem', fontWeight: 700 }}>No Documents Listed Yet</h4>
+                  <p style={{ margin: '0.35rem 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+                    Document checklist for {currentVisa.country} has not been added in the Admin panel yet. Items will appear here as soon as they are added in Admin.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* 3. Step by Step Process (How It Works) */}
             <div className="detail-section-block">
               <span className="detail-section-tag">How It Works</span>
-              <h2 className="detail-section-heading">4 Simple Steps to Get Your {visa.country} Visa</h2>
+              <h2 className="detail-section-heading">4 Simple Steps to Get Your {currentVisa.country} Visa</h2>
               
               <div className="process-timeline-grid">
                 <div className="timeline-step-card">
@@ -442,38 +570,30 @@ export const VisaDetailPage = ({
               <span className="detail-section-tag">Got Questions?</span>
               <h2 className="detail-section-heading">Frequently Asked Questions</h2>
 
-              <div className="faq-accordion-list">
-                {[
-                  {
-                    q: `Is a physical interview required for ${visa.country} Visa?`,
-                    a: `Most tourist visas for ${visa.country} are processed online without requiring a physical interview. If the embassy requests biometrics or an interview, Pehla Visa will guide you step-by-step.`
-                  },
-                  {
-                    q: `How far in advance should I apply for a ${visa.country} Visa?`,
-                    a: `We recommend applying at least 3-4 weeks prior to your intended date of travel to accommodate document verification and embassy processing times.`
-                  },
-                  {
-                    q: `What is the minimum bank balance required for ${visa.country}?`,
-                    a: `The embassy generally expects applicants to show sufficient funds to cover stay expenses (approx ₹1.5L to ₹3L per person depending on duration).`
-                  },
-                  {
-                    q: `Will I get a refund if my visa is rejected?`,
-                    a: `Pehla Visa offers a 100% Document Verification Guarantee. We check your files thoroughly before submitting so rejections are extremely rare (under 0.8%).`
-                  }
-                ].map((faq, idx) => (
-                  <div
-                    key={idx}
-                    className={`faq-detail-item ${activeFaq === idx ? 'open' : ''}`}
-                    onClick={() => setActiveFaq(activeFaq === idx ? null : idx)}
-                  >
-                    <div className="faq-detail-question">
-                      <span>{faq.q}</span>
-                      <span className="faq-toggle-plus">{activeFaq === idx ? <HiMinus /> : <HiPlus />}</span>
+              {currentVisa.faqs && currentVisa.faqs.length > 0 ? (
+                <div className="faq-accordion-list">
+                  {currentVisa.faqs.map((faq, idx) => (
+                    <div
+                      key={faq.id || idx}
+                      className={`faq-detail-item ${activeFaq === idx ? 'open' : ''}`}
+                      onClick={() => setActiveFaq(activeFaq === idx ? null : idx)}
+                    >
+                      <div className="faq-detail-question">
+                        <span>{faq.question}</span>
+                        <span className="faq-toggle-plus">{activeFaq === idx ? <HiMinus /> : <HiPlus />}</span>
+                      </div>
+                      {activeFaq === idx && <div className="faq-detail-answer">{faq.answer}</div>}
                     </div>
-                    {activeFaq === idx && <div className="faq-detail-answer">{faq.a}</div>}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '0.75rem', border: '1px dashed #cbd5e1', textAlign: 'center', margin: '1rem 0' }}>
+                  <h4 style={{ margin: 0, color: '#334155', fontSize: '0.95rem', fontWeight: 700 }}>No FAQs Added Yet</h4>
+                  <p style={{ margin: '0.35rem 0 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+                    FAQs for {currentVisa.country} have not been added in Admin yet. Items added in Tab 3 of Admin will appear here automatically.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

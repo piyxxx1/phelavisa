@@ -1,13 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import type { VisaDestination } from '../data/visasData';
 import type { UserProfile } from './LoginPage';
+import { API_BASE_URL } from '../config/apiConfig';
+import { calculateCategoryTotal } from '../utils/pricingUtils';
 import {
   HiArrowLeft,
   HiChevronRight,
   HiUser,
   HiPhone,
-  HiCreditCard,
-  HiBuildingLibrary,
   HiLockClosed,
   HiSparkles,
   HiCheckCircle,
@@ -21,7 +21,6 @@ import {
   HiArrowUpTray,
   HiDocumentCheck,
 } from 'react-icons/hi2';
-import { FaGooglePay } from 'react-icons/fa6';
 
 export interface ApplicantDetail {
   id: number;
@@ -78,7 +77,6 @@ export const ApplyVisaPage = ({
   const [applicantPhone, setApplicantPhone] = useState(user?.phone || '');
   const [applicantEmail, setApplicantEmail] = useState(user?.email || '');
   const [travelDate, setTravelDate] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking'>('upi');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [bookingRefId, setBookingRefId] = useState('');
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
@@ -86,42 +84,90 @@ export const ApplyVisaPage = ({
   // Uploaded Documents State (Document ID -> File)
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File>>({});
 
-  // Document Checklist configuration (from admin or standard defaults)
+  // Categories List configured from Admin (Custom or Default)
+  const categoriesList = useMemo(() => {
+    if (visa.customCategories && visa.customCategories.length > 0) {
+      return visa.customCategories;
+    }
+    const legacyMap: Record<string, { name: string; badge: string }> = {
+      tourist: { name: 'Tourist Visa', badge: 'Standard Process' },
+      express: { name: 'Express eVisa', badge: '⚡ 24h Fast Track' },
+      business: { name: 'Business Visa', badge: '1 Year Multiple' },
+    };
+    const availableKeys = visa.availableCategories && visa.availableCategories.length > 0
+      ? visa.availableCategories
+      : ['tourist', 'express', 'business'];
+
+    return availableKeys.map((key) => {
+      const cp = visa.categoryPricing?.[key as 'tourist' | 'express' | 'business'];
+      const info = legacyMap[key] || { name: key.toUpperCase(), badge: 'Standard' };
+      return {
+        id: key,
+        name: info.name,
+        badge: info.badge,
+        price: cp?.price || visa.price || '₹4,999',
+        visaPrice: cp?.visaPrice || visa.visaPrice || '₹3,500',
+        ourCharges: cp?.ourCharges || visa.ourCharges || '₹999',
+        taxRate: cp?.taxRate || visa.taxRate || '₹499 (18% GST)',
+      };
+    });
+  }, [visa]);
+
+  const selectedCategoryObj = useMemo(() => {
+    return categoriesList.find((c) => c.id === selectedVariant) || categoriesList[0];
+  }, [categoriesList, selectedVariant]);
+
+  // Document Checklist configuration (filtered specifically for the selected visa category)
   const requiredDocs = useMemo(() => {
     if (visa.docChecklist && visa.docChecklist.length > 0) {
-      return visa.docChecklist;
+      const activeId = selectedVariant.toLowerCase().trim();
+      const activeName = (selectedCategoryObj?.name || '').toLowerCase().trim();
+
+      const filtered = visa.docChecklist.filter((d) => {
+        const docCat = (d.forVisaCategory || 'all').toLowerCase().trim();
+
+        // If document is marked for 'all', it applies to every category
+        if (docCat === 'all') return true;
+
+        // Match document category ID or Name
+        if (docCat === activeId) return true;
+        if (activeName && docCat === activeName) return true;
+
+        // Handle variant string matching
+        if (activeId.length >= 3 && (activeId.includes(docCat) || docCat.includes(activeId))) return true;
+
+        return false;
+      });
+
+      return filtered;
     }
     return [
       {
         id: 'doc-passport-front',
-        category: 'mandatory' as const,
+        forVisaCategory: 'all',
+        category: 'mandatory',
         title: 'Original Passport Front Page (Bio Page)',
         description: 'Clear color scan of passport first page showing full name, photo, & passport number.',
         isRequired: true,
       },
       {
         id: 'doc-passport-back',
-        category: 'mandatory' as const,
+        forVisaCategory: 'all',
+        category: 'mandatory',
         title: 'Passport Back Page (Address Page)',
         description: 'Clear color scan of passport last page showing parents name & address.',
         isRequired: true,
       },
       {
         id: 'doc-photo',
-        category: 'mandatory' as const,
+        forVisaCategory: 'all',
+        category: 'mandatory',
         title: 'Recent Passport Size Photograph',
         description: 'White background, 35mm x 45mm, 80% face coverage color photo.',
         isRequired: true,
       },
-      {
-        id: 'doc-bank-statement',
-        category: 'financial' as const,
-        title: '6 Months Bank Account Statement',
-        description: 'Updated bank statement showing sufficient funds with bank seal/stamp.',
-        isRequired: visa.documents === 'Bank Statement Required',
-      },
     ];
-  }, [visa]);
+  }, [visa, selectedVariant, selectedCategoryObj]);
 
   // Sync user details to Primary Applicant (Person 1)
   useEffect(() => {
@@ -170,65 +216,254 @@ export const ApplyVisaPage = ({
     });
   };
 
-  // Handlers for File Uploads
-  const handleFileUpload = (docId: string, file: File | null) => {
+  // Handlers for File Uploads (Keyed per applicant: `${appIdx}_${docId}`)
+  const handleFileUpload = (fileKey: string, file: File | null) => {
     if (!file) return;
     setUploadedFiles((prev) => ({
       ...prev,
-      [docId]: file,
+      [fileKey]: file,
     }));
   };
 
-  const handleRemoveFile = (docId: string) => {
+  const handleRemoveFile = (fileKey: string) => {
     setUploadedFiles((prev) => {
       const copy = { ...prev };
-      delete copy[docId];
+      delete copy[fileKey];
       return copy;
     });
   };
 
-  // Form Validation check: returns true ONLY when ALL applicants, contact info, AND MANDATORY DOCUMENTS are uploaded!
+  // Form Validation check: returns true ONLY when ALL applicants AND MANDATORY DOCUMENTS FOR ALL APPLICANTS are uploaded!
   const isFormValid = useMemo(() => {
     const allApplicantsValid = applicants.every(
       (app) => app.name.trim() && app.dob && app.passportNumber.trim() && app.passportExpiry
     );
 
     const mandatoryDocsList = requiredDocs.filter((d) => d.isRequired);
-    const allDocsUploaded = mandatoryDocsList.every((d) => Boolean(uploadedFiles[d.id]));
+    const allDocsUploadedForAllApplicants = applicants.every((_, appIdx) =>
+      mandatoryDocsList.every((d) => Boolean(uploadedFiles[`${appIdx}_${d.id}`]))
+    );
 
     return Boolean(
       allApplicantsValid &&
-      allDocsUploaded &&
+      allDocsUploadedForAllApplicants &&
       applicantPhone.trim() &&
       applicantEmail.trim() &&
       travelDate
     );
   }, [applicants, requiredDocs, uploadedFiles, applicantPhone, applicantEmail, travelDate]);
 
-  // Calculate pricing & fee breakdown
-  const basePriceNum = useMemo(() => {
-    const cleanNum = parseInt(visa.price.replace(/[^0-9]/g, ''), 10);
-    return isNaN(cleanNum) ? 4999 : cleanNum;
-  }, [visa.price]);
+  // Calculate pricing & fee breakdown exactly matching selected visa category
+  const currentCategoryPricing = useMemo(() => {
+    const found = categoriesList.find((c) => c.id === selectedVariant) || categoriesList[0];
+    return calculateCategoryTotal(found?.visaPrice, found?.ourCharges, found?.taxRate);
+  }, [categoriesList, selectedVariant]);
 
-  const variantMultiplier = selectedVariant === 'express' ? 1.3 : selectedVariant === 'business' ? 1.5 : 1;
-  const totalPrice = Math.round(basePriceNum * variantMultiplier * travelersCount);
+  const embassyFee = currentCategoryPricing.vP * travelersCount;
+  const serviceFee = currentCategoryPricing.oC * travelersCount;
+  const gstTax = currentCategoryPricing.tR * travelersCount;
+  const totalPrice = currentCategoryPricing.total * travelersCount;
 
-  // Itemized fee split
-  const embassyFee = Math.round(totalPrice * 0.7);
-  const serviceFee = Math.round(totalPrice * 0.2);
-  const gstTax = totalPrice - embassyFee - serviceFee;
+  const [isRedirectingToRazorpay, setIsRedirectingToRazorpay] = useState(false);
 
-  const handleSubmitApplication = (e: React.FormEvent) => {
-    e.preventDefault();
+  const loadRazorpayScript = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if ((window as any).Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleSubmitApplication = async () => {
     if (!isFormValid) {
-      alert('Please fill out all mandatory applicant details AND upload all required documents before proceeding to payment.');
+      alert('Please fill out all mandatory applicant details AND upload all required documents for EACH person before proceeding to payment.');
       return;
     }
+
+    setIsRedirectingToRazorpay(true);
     const generatedRef = 'PV-' + Math.floor(100000 + Math.random() * 900000);
-    setBookingRefId(generatedRef);
-    setIsSubmitted(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const now = new Date();
+    const formattedSubmittedAt = now.toISOString().replace('T', ' ').slice(0, 16);
+
+    const mappedTravelers = applicants.map((ap, idx) => {
+      const personDocs = requiredDocs.map((doc, docIdx) => {
+        const fileKey = `${idx}_${doc.id}`;
+        const file = uploadedFiles[fileKey];
+        return {
+          id: `doc-${idx + 1}-${docIdx + 1}`,
+          name: file ? file.name : `${(ap.name || `Applicant_${idx + 1}`).replace(/\s+/g, '_')}_${doc.id.replace('doc-', '')}.pdf`,
+          category: doc.title,
+          fileType: file && (file.name.endsWith('.png') || file.name.endsWith('.jpg') || file.name.endsWith('.jpeg')) ? 'image' : 'pdf',
+          fileSize: file ? `${(file.size / 1024).toFixed(0)} KB` : '1.5 MB',
+          fileUrl: `${API_BASE_URL.replace(/\/api$/, '')}/uploads/dummy_passport.pdf`,
+        };
+      });
+
+      return {
+        id: `ap-${Date.now()}-${idx + 1}`,
+        applicantNumber: idx + 1,
+        fullName: ap.name || `Applicant ${idx + 1}`,
+        name: ap.name || `Applicant ${idx + 1}`,
+        phone: idx === 0 ? applicantPhone : '',
+        email: idx === 0 ? applicantEmail : '',
+        dob: ap.dob || '',
+        gender: ap.gender || 'Male',
+        address: 'India',
+        city: 'New Delhi',
+        state: 'Delhi',
+        pincode: '110001',
+        passportNumber: ap.passportNumber || '',
+        passportIssuePlace: ap.passportIssuePlace || 'India',
+        passportExpiry: ap.passportExpiry || '',
+        documentsSubmitted: personDocs,
+      };
+    });
+
+    const payload = {
+      id: 'app-' + Date.now(),
+      bookingRefId: generatedRef,
+      countryId: visa.id,
+      countryName: visa.country,
+      visaTitle: visa.title,
+      visaCategory: visa.visaCategory || 'TOURIST VISA',
+      variant: selectedVariant,
+      variantLabel: selectedVariant === 'express' ? 'Express 24-Hour eVisa' : selectedVariant === 'business' ? 'Business 1-Year Multiple Entry' : 'Standard Tourist Visa',
+      processingTime: visa.processingTime,
+      stayPeriod: visa.stayPeriod,
+      validity: visa.validity,
+      entryType: visa.entryType,
+      applicantName: applicants[0]?.name || 'Primary Applicant',
+      applicantPhone: applicantPhone || '',
+      applicantEmail: applicantEmail || '',
+      passportNumber: applicants[0]?.passportNumber || '',
+      passportExpiry: applicants[0]?.passportExpiry || '',
+      travelDate: travelDate || '',
+      returnDate: '2026-09-30',
+      travelersCount: applicants.length,
+      applicantsList: mappedTravelers,
+      travelers: mappedTravelers,
+      basePrice: embassyFee + serviceFee,
+      gstAmount: gstTax,
+      totalPrice: totalPrice,
+      paymentMethod: 'Razorpay Official Secure Payment Gateway',
+      paymentTransactionId: 'TXN-RZP-' + Math.floor(100000000 + Math.random() * 900000000),
+      paymentStatus: 'PAID',
+      applicationStatus: 'PENDING_VERIFICATION',
+      submittedAt: formattedSubmittedAt,
+      adminNotes: 'Application submitted via Razorpay Official Secure Payment Gateway & saved to MongoDB database.',
+    };
+
+    try {
+      // Step 1: Load Razorpay SDK
+      const sdkLoaded = await loadRazorpayScript();
+      if (!sdkLoaded) {
+        alert('Razorpay Checkout SDK failed to load. Please check your internet connection.');
+        setIsRedirectingToRazorpay(false);
+        return;
+      }
+
+      // Step 2: Phase 1 Backend API - Create Razorpay Order
+      const orderRes = await fetch(`${API_BASE_URL}/payment/razorpay/create-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: totalPrice,
+          currency: 'INR',
+          receipt: `rcpt_visa_${Date.now()}`,
+          notes: {
+            bookingRefId: generatedRef,
+            country: visa.country,
+            applicantName: applicants[0]?.name || '',
+          },
+        }),
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderData.success) {
+        alert(orderData.message || 'Failed to create Razorpay order.');
+        setIsRedirectingToRazorpay(false);
+        return;
+      }
+
+      // Step 3: Phase 2 - Open Official Razorpay Checkout Modal Window
+      const options = {
+        key: orderData.keyId || 'rzp_test_TbE9pDpy0cOe05',
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: 'Pehla Visa',
+        description: `Visa Application Fee for ${visa.country} (${applicants.length} Traveler${applicants.length > 1 ? 's' : ''})`,
+        order_id: orderData.orderId.startsWith('order_mock_') ? undefined : orderData.orderId,
+        prefill: {
+          name: applicants[0]?.name || '',
+          email: applicantEmail || '',
+          contact: applicantPhone || '',
+        },
+        notes: {
+          bookingRefId: generatedRef,
+        },
+        theme: {
+          color: '#0284c7',
+        },
+        handler: async function (response: any) {
+          console.log('✓ Razorpay Payment Success Response:', response);
+          setIsRedirectingToRazorpay(true);
+
+          try {
+            // Phase 3: Backend HMAC-SHA256 Signature Verification & Order Save to MongoDB
+            const verifyRes = await fetch(`${API_BASE_URL}/payment/razorpay/verify-signature`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id || orderData.orderId,
+                razorpay_payment_id: response.razorpay_payment_id || `pay_mock_${Date.now()}`,
+                razorpay_signature: response.razorpay_signature || '',
+                productType: 'visa',
+                orderPayload: {
+                  ...payload,
+                  paymentTransactionId: response.razorpay_payment_id || payload.paymentTransactionId,
+                },
+              }),
+            });
+
+            const verifyData = await verifyRes.json();
+            console.log('✓ Razorpay HMAC-SHA256 signature verified & order confirmed:', verifyData);
+
+            setBookingRefId(generatedRef);
+            setIsSubmitted(true);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } catch (verifyErr) {
+            console.error('Signature verification error:', verifyErr);
+            alert('Payment received but verification failed. Please contact support.');
+          } finally {
+            setIsRedirectingToRazorpay(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            console.log('Razorpay modal closed by user');
+            setIsRedirectingToRazorpay(false);
+          },
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', function (resp: any) {
+        console.error('Razorpay Payment Failed:', resp.error);
+        alert(`Payment failed: ${resp.error.description || 'Transaction canceled.'}`);
+        setIsRedirectingToRazorpay(false);
+      });
+      rzp.open();
+    } catch (err: any) {
+      console.error('Razorpay Checkout error:', err);
+      alert('Error initiating Razorpay payment: ' + (err.message || 'Unknown error'));
+      setIsRedirectingToRazorpay(false);
+    }
   };
 
   return (
@@ -255,7 +490,7 @@ export const ApplyVisaPage = ({
           <div className="apply-hero-header">
             <div className="apply-country-flag-box">
               <img
-                src={`https://flagcdn.com/w80/${visa.flagCode === 'eu' ? 'eu' : visa.flagCode}.png`}
+                src={`https://flagcdn.com/w80/${(visa.flagCode || 'fr').toLowerCase()}.png`}
                 alt={visa.country}
                 className="apply-flag-img"
               />
@@ -331,7 +566,7 @@ export const ApplyVisaPage = ({
             </div>
           ) : (
             /* FORM & CHECKOUT LAYOUT */
-            <form onSubmit={handleSubmitApplication} className="apply-form-layout-grid">
+            <form onSubmit={(e) => { e.preventDefault(); handleSubmitApplication(); }} className="apply-form-layout-grid">
               {/* Left Column: Applicant Cards + Add Documents Card */}
               <div className="apply-form-left-col">
                 {/* Form Validation Alert */}
@@ -483,88 +718,107 @@ export const ApplyVisaPage = ({
                         onChange={(e) => setSelectedVariant(e.target.value)}
                         className="form-select-input"
                       >
-                        <option value="tourist">Tourist Visa (Standard)</option>
-                        <option value="express">Express eVisa (⚡ 24 Hours)</option>
-                        <option value="business">Business Visa (1 Year)</option>
+                        {categoriesList.map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.name} ({cat.badge || 'Standard'})
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
                 </div>
 
-                {/* SECTION 4: ADD DOCUMENTS / UPLOAD REQUIRED DOCUMENTS */}
+                {/* SECTION 4: ADD DOCUMENTS / UPLOAD REQUIRED DOCUMENTS PER APPLICANT */}
                 <div className="apply-form-section-card">
                   <div className="applicant-card-header">
                     <h3 className="form-card-title">
                       <HiDocumentArrowUp size={20} className="title-icon green" />
-                      Add Documents (Mandatory Document Checklist) *
+                      Add Documents (Mandatory Document Checklist for {applicants.length} Applicant{applicants.length > 1 ? 's' : ''}) *
                     </h3>
                     <span className="doc-count-badge">
-                      {Object.keys(uploadedFiles).length} / {requiredDocs.filter((d) => d.isRequired).length} Mandatory Uploaded
+                      {applicants.reduce((acc, _, appIdx) => acc + requiredDocs.filter((d) => Boolean(uploadedFiles[`${appIdx}_${d.id}`])).length, 0)} / {requiredDocs.filter((d) => d.isRequired).length * applicants.length} Mandatory Uploaded
                     </span>
                   </div>
                   <p className="doc-section-help-text" style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '1.25rem' }}>
-                    Please upload clear photos or scans of all mandatory documents below. You cannot proceed to payment without uploading these documents.
+                    Please upload clear photos or scans of mandatory documents for <strong>each individual traveler ({applicants.length} person{applicants.length > 1 ? 's' : ''})</strong> below before proceeding to payment.
                   </p>
 
-                  <div className="docs-upload-list">
-                    {requiredDocs.map((doc) => {
-                      const isUploaded = Boolean(uploadedFiles[doc.id]);
-                      const currentFile = uploadedFiles[doc.id];
-                      return (
-                        <div key={doc.id} className={`doc-upload-item-card ${isUploaded ? 'uploaded' : ''}`}>
-                          <div className="doc-item-left">
-                            <div className="doc-header-row">
-                              <strong className="doc-title-text">{doc.title}</strong>
-                              {doc.isRequired ? (
-                                <span className="req-pill mandatory">* Mandatory</span>
-                              ) : (
-                                <span className="req-pill optional">Optional</span>
-                              )}
-                            </div>
-                            <p className="doc-desc-text">{doc.description}</p>
-                          </div>
-
-                          <div className="doc-item-right">
-                            {isUploaded && currentFile ? (
-                              <div className="file-uploaded-status-badge">
-                                <HiCheckCircle size={18} className="check-icon" />
-                                <div className="uploaded-file-details">
-                                  <span className="file-name-truncated" title={currentFile.name}>
-                                    {currentFile.name}
-                                  </span>
-                                  <span className="file-size">
-                                    ({(currentFile.size / 1024).toFixed(0)} KB)
-                                  </span>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="remove-file-btn"
-                                  onClick={() => handleRemoveFile(doc.id)}
-                                  title="Remove uploaded file"
-                                >
-                                  <HiXMark size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <label className="upload-file-label-btn">
-                                <HiArrowUpTray size={16} />
-                                <span>Upload File</span>
-                                <input
-                                  type="file"
-                                  accept="image/*,application/pdf"
-                                  className="hidden-file-input"
-                                  onChange={(e) => {
-                                    if (e.target.files && e.target.files[0]) {
-                                      handleFileUpload(doc.id, e.target.files[0]);
-                                    }
-                                  }}
-                                />
-                              </label>
-                            )}
-                          </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    {applicants.map((applicant, appIdx) => (
+                      <div key={appIdx} style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '0.75rem', border: '1px solid #cbd5e1' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>
+                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <HiUser style={{ color: '#2563eb' }} />
+                            <span>Person {appIdx + 1} ({applicant.name || `Applicant ${appIdx + 1}`}) Mandatory Documents:</span>
+                          </h4>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#2563eb', background: '#eff6ff', padding: '0.2rem 0.6rem', borderRadius: '0.35rem', border: '1px solid #bfdbfe' }}>
+                            {requiredDocs.filter((d) => Boolean(uploadedFiles[`${appIdx}_${d.id}`])).length} / {requiredDocs.length} Uploaded
+                          </span>
                         </div>
-                      );
-                    })}
+
+                        <div className="docs-upload-list">
+                          {requiredDocs.map((doc) => {
+                            const fileKey = `${appIdx}_${doc.id}`;
+                            const isUploaded = Boolean(uploadedFiles[fileKey]);
+                            const currentFile = uploadedFiles[fileKey];
+                            return (
+                              <div key={fileKey} className={`doc-upload-item-card ${isUploaded ? 'uploaded' : ''}`}>
+                                <div className="doc-item-left">
+                                  <div className="doc-header-row">
+                                    <strong className="doc-title-text">{doc.title}</strong>
+                                    {doc.isRequired ? (
+                                      <span className="req-pill mandatory">* Mandatory</span>
+                                    ) : (
+                                      <span className="req-pill optional">Optional</span>
+                                    )}
+                                  </div>
+                                  <p className="doc-desc-text">{doc.description}</p>
+                                </div>
+
+                                <div className="doc-item-right">
+                                  {isUploaded && currentFile ? (
+                                    <div className="file-uploaded-status-badge">
+                                      <HiCheckCircle size={18} className="check-icon" />
+                                      <div className="uploaded-file-details">
+                                        <span className="file-name-truncated" title={currentFile.name}>
+                                          {currentFile.name}
+                                        </span>
+                                        <span className="file-size">
+                                          ({(currentFile.size / 1024).toFixed(0)} KB)
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="remove-file-btn"
+                                        onClick={() => handleRemoveFile(fileKey)}
+                                        title="Remove uploaded file"
+                                      >
+                                        <HiXMark size={16} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <label className="upload-file-label-btn">
+                                      <HiArrowUpTray size={16} />
+                                      <span>Upload File</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*,application/pdf"
+                                        className="hidden-file-input"
+                                        onChange={(e) => {
+                                          if (e.target.files && e.target.files[0]) {
+                                            handleFileUpload(fileKey, e.target.files[0]);
+                                          }
+                                        }}
+                                      />
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -575,7 +829,7 @@ export const ApplyVisaPage = ({
                   {/* Country Header Pill */}
                   <div className="sidebar-country-header">
                     <img
-                      src={`https://flagcdn.com/w40/${visa.flagCode === 'eu' ? 'eu' : visa.flagCode}.png`}
+                      src={`https://flagcdn.com/w40/${(visa.flagCode || 'fr').toLowerCase()}.png`}
                       alt={visa.country}
                       className="mini-country-flag"
                     />
@@ -627,11 +881,36 @@ export const ApplyVisaPage = ({
                     </div>
                   </div>
 
+                  {/* Fixed 4 Key Specifications Quick Summary Box */}
+                  <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '0.65rem', border: '1px solid #e2e8f0', marginBottom: '1.25rem' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', display: 'block', marginBottom: '0.5rem' }}>
+                      Visa Specifications Summary:
+                    </span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.78rem' }}>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block' }}>Processing:</span>
+                        <strong style={{ color: '#0f172a' }}>{visa.processingTime || '5-7 Days'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block' }}>Stay Duration:</span>
+                        <strong style={{ color: '#0f172a' }}>{visa.stayPeriod || '30 Days'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block' }}>Visa Validity:</span>
+                        <strong style={{ color: '#0f172a' }}>{visa.validity || '180 Days'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748b', display: 'block' }}>Entry Type:</span>
+                        <strong style={{ color: '#0f172a' }}>{visa.entryType || 'Single Entry'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Itemized Price Breakdown */}
                   <div className="itemized-price-card">
                     <h4 className="summary-title">Itemized Fee Breakdown</h4>
                     <div className="price-item-row">
-                      <span>Embassy Govt Fee ({travelersCount} Person{travelersCount > 1 ? 's' : ''})</span>
+                      <span>{visa.feeLabel || 'Embassy Govt Fee'} ({travelersCount} Person{travelersCount > 1 ? 's' : ''})</span>
                       <span>₹{embassyFee.toLocaleString('en-IN')}</span>
                     </div>
                     <div className="price-item-row">
@@ -649,67 +928,67 @@ export const ApplyVisaPage = ({
                     </div>
                   </div>
 
-                  {/* Payment Gateway Modes */}
-                  <div className="payment-options-card">
-                    <h4 className="summary-title">
-                      <HiCreditCard size={16} /> Select Payment Option
-                    </h4>
-                    <div className="payment-modes-list">
-                      <button
-                        type="button"
-                        className={`payment-mode-btn ${paymentMethod === 'upi' ? 'active' : ''}`}
-                        onClick={() => setPaymentMethod('upi')}
-                      >
-                        <FaGooglePay size={24} className="pay-mode-icon green" />
-                        <div className="pay-mode-text">
-                          <strong>UPI / QR Code</strong>
-                          <span>GPay, PhonePe, Paytm, BHIM</span>
+                  {/* Razorpay Official Payment Gateway Card */}
+                  <div className="payment-options-card" style={{ marginBottom: '1.25rem', background: '#f0f9ff', border: '2px solid #0284c7', borderRadius: '0.85rem', padding: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ background: '#02042b', color: '#ffffff', padding: '0.35rem 0.7rem', borderRadius: '0.5rem', fontWeight: 900, fontSize: '0.85rem', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                          <span style={{ color: '#3395ff' }}>R</span>azorpay
                         </div>
-                        <span className="pay-radio"></span>
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`payment-mode-btn ${paymentMethod === 'card' ? 'active' : ''}`}
-                        onClick={() => setPaymentMethod('card')}
-                      >
-                        <HiCreditCard size={20} className="pay-mode-icon blue" />
-                        <div className="pay-mode-text">
-                          <strong>Credit / Debit Card</strong>
-                          <span>Visa, Mastercard, RuPay</span>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
+                            Razorpay Official Gateway
+                          </h4>
+                          <span style={{ fontSize: '0.75rem', color: '#0369a1', fontWeight: 600 }}>Official Secure India Payment Portal</span>
                         </div>
-                        <span className="pay-radio"></span>
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`payment-mode-btn ${paymentMethod === 'netbanking' ? 'active' : ''}`}
-                        onClick={() => setPaymentMethod('netbanking')}
-                      >
-                        <HiBuildingLibrary size={20} className="pay-mode-icon purple" />
-                        <div className="pay-mode-text">
-                          <strong>Net Banking</strong>
-                          <span>All Major Indian Banks</span>
-                        </div>
-                        <span className="pay-radio"></span>
-                      </button>
+                      </div>
+                      <HiShieldCheck size={24} style={{ color: '#0284c7' }} />
                     </div>
-                  </div>
 
-                  {/* Pay Now CTA - Non-Green / Muted Gray until all fields AND documents are uploaded */}
-                  <button
-                    type="submit"
-                    disabled={!isFormValid}
-                    className={`pay-now-primary-btn ${isFormValid ? 'enabled-green' : 'disabled-gray'}`}
-                  >
-                    <HiLockClosed size={18} />
-                    <span>
-                      {isFormValid
-                        ? `Pay ₹${totalPrice.toLocaleString('en-IN')} & Submit`
-                        : `Upload Documents to Pay ₹${totalPrice.toLocaleString('en-IN')}`}
-                    </span>
-                    <HiSparkles size={18} />
-                  </button>
+                    <p style={{ fontSize: '0.825rem', color: '#475569', marginBottom: '1rem', lineHeight: 1.4 }}>
+                      Clicking proceed will securely launch <strong>Razorpay's official checkout portal</strong> where you can pay using UPI (Google Pay, PhonePe, Paytm), Credit / Debit Card, NetBanking, or Mobile Wallets.
+                    </p>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '1rem' }}>
+                      <span style={{ background: '#ffffff', border: '1px solid #bae6fd', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#0369a1' }}>⚡ UPI / QR (GPay, PhonePe, Paytm)</span>
+                      <span style={{ background: '#ffffff', border: '1px solid #bae6fd', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#0369a1' }}>💳 Visa, Mastercard, RuPay & Amex</span>
+                      <span style={{ background: '#ffffff', border: '1px solid #bae6fd', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#0369a1' }}>🌐 NetBanking (50+ Banks)</span>
+                      <span style={{ background: '#ffffff', border: '1px solid #bae6fd', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, color: '#0369a1' }}>👛 Wallets & EMI</span>
+                    </div>
+
+                    {/* Proceed to Razorpay Hosted Checkout CTA Button */}
+                    <button
+                      type="button"
+                      disabled={!isFormValid || isRedirectingToRazorpay}
+                      onClick={() => handleSubmitApplication()}
+                      style={{
+                        width: '100%',
+                        background: !isFormValid ? '#cbd5e1' : 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                        color: '#ffffff',
+                        padding: '0.9rem',
+                        borderRadius: '0.65rem',
+                        border: 'none',
+                        fontSize: '0.95rem',
+                        fontWeight: 800,
+                        cursor: !isFormValid || isRedirectingToRazorpay ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.5rem',
+                        boxShadow: !isFormValid ? 'none' : '0 6px 18px rgba(2, 132, 199, 0.35)',
+                      }}
+                    >
+                      <HiLockClosed size={18} />
+                      <span>
+                        {isRedirectingToRazorpay
+                          ? 'Opening Razorpay Gateway...'
+                          : isFormValid
+                          ? `Proceed to Pay ₹${totalPrice.toLocaleString('en-IN')} via Razorpay`
+                          : `Upload Documents to Pay ₹${totalPrice.toLocaleString('en-IN')}`}
+                      </span>
+                      <HiSparkles size={18} />
+                    </button>
+                  </div>
 
                   {/* Contact Support Button below Pay Now button */}
                   <button

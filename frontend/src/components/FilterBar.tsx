@@ -26,9 +26,9 @@ const DELIVERY_OPTIONS: SelectOption[] = [
 
 const TYPE_OPTIONS: SelectOption[] = [
   { label: 'All Visa Types', value: 'All' },
-  { label: 'Tourist Visa', value: 'Tourist Visa', badge: 'Popular' },
-  { label: 'eVisa', value: 'eVisa', badge: 'Digital' },
-  { label: 'Business Visa', value: 'Business Visa' },
+  { label: 'e-Visa', value: 'e-Visa', badge: 'Digital' },
+  { label: 'Visa on Arrival', value: 'Visa on Arrival', badge: 'Instant' },
+  { label: 'Sticker Visa', value: 'Sticker Visa', badge: 'Passport Sticker' },
 ];
 
 const DOCUMENT_OPTIONS: SelectOption[] = [

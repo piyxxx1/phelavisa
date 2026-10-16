@@ -2,6 +2,7 @@ import React from 'react';
 import type { VisaDestination } from '../data/visasData';
 import { HiArrowRight, HiBolt } from 'react-icons/hi2';
 import { FiClock, FiCalendar } from 'react-icons/fi';
+import { getStartingPrice } from '../utils/pricingUtils';
 
 interface CountryVisaCardProps {
   visa: VisaDestination;
@@ -9,6 +10,8 @@ interface CountryVisaCardProps {
 }
 
 export const CountryVisaCard: React.FC<CountryVisaCardProps> = ({ visa, onSelect }) => {
+  const startingPrice = getStartingPrice(visa);
+
   return (
     <div className="figma-visa-card" onClick={() => onSelect?.(visa)}>
       {/* Media Header */}
@@ -25,7 +28,7 @@ export const CountryVisaCard: React.FC<CountryVisaCardProps> = ({ visa, onSelect
         <div className="figma-card-badges">
           <div className="figma-flag-pill">
             <img
-              src={`https://flagcdn.com/w40/${visa.flagCode === 'eu' ? 'eu' : visa.flagCode}.png`}
+              src={`https://flagcdn.com/w40/${(visa.flagCode || 'fr').toLowerCase()}.png`}
               alt={visa.country}
               className="figma-flag-img"
               onError={(e) => {
@@ -64,8 +67,8 @@ export const CountryVisaCard: React.FC<CountryVisaCardProps> = ({ visa, onSelect
         {/* Card Footer: Price & Clean CTA */}
         <div className="figma-card-footer">
           <div className="figma-price-block">
-            <span className="price-label">Starts from</span>
-            <span className="price-amount">{visa.price}</span>
+            <span className="price-label">Starting at</span>
+            <span className="price-amount">{startingPrice}</span>
           </div>
 
           <button className="figma-apply-btn">

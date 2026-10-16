@@ -1,10 +1,14 @@
-import { useState } from 'react';
-import { HiDevicePhoneMobile, HiEnvelope, HiUser, HiArrowLeft } from 'react-icons/hi2';
+import React, { useState } from 'react';
+import { HiEnvelope, HiUser, HiArrowLeft } from 'react-icons/hi2';
+import { API_BASE_URL } from '../config/apiConfig';
 
 export interface UserProfile {
+  id?: string;
   name: string;
   email: string;
-  phone: string;
+  phone?: string;
+  passportNumber?: string;
+  role?: string;
 }
 
 interface LoginPageProps {
@@ -12,45 +16,84 @@ interface LoginPageProps {
   onNavigateHome: () => void;
 }
 
-export const LoginPage = ({ onLoginSuccess, onNavigateHome }: LoginPageProps) => {
-  const [loginMethod, setLoginMethod] = useState<'phone' | 'email'>('phone');
-  const [phone, setPhone] = useState('');
-  const [name, setName] = useState('');
+export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onNavigateHome }) => {
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [passportNumber, setPassportNumber] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginMethod === 'phone' && !phone) {
-      alert('Please enter your mobile number.');
+    setSuccessMessage(null);
+
+    if (!email || !password) {
+      alert('Please enter your email and password.');
       return;
     }
-    if (loginMethod === 'email' && !email) {
-      alert('Please enter your email address.');
+    if (authMode === 'register' && !name) {
+      alert('Please enter your full name.');
       return;
     }
-    setOtpSent(true);
-  };
 
-  const handleVerifyAndLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const finalName = name.trim() ? name.trim() : 'Piyush';
-    const userProfile: UserProfile = {
-      name: finalName,
-      email: email || `${finalName.toLowerCase()}@example.com`,
-      phone: phone || '9876543210',
-    };
-    onLoginSuccess(userProfile);
-  };
+    setLoading(true);
+    try {
+      const endpoint = authMode === 'register' ? `${API_BASE_URL}/auth/register` : `${API_BASE_URL}/auth/login`;
+      const body = authMode === 'register'
+        ? { name, email, phone, password, passportNumber }
+        : { email, password };
 
-  const handleQuickLogin = (quickName: string) => {
-    const userProfile: UserProfile = {
-      name: quickName,
-      email: `${quickName.toLowerCase()}@example.com`,
-      phone: '9876543210',
-    };
-    onLoginSuccess(userProfile);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Authentication failed. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // REGISTRATION SUCCESS FLOW: DO NOT Auto-login. Show Alert & Switch to Sign In Tab!
+      if (authMode === 'register') {
+        setSuccessMessage('🎉 Account created successfully! Please log in with your ID & Password below.');
+        setAuthMode('login');
+        setPassword('');
+        setLoading(false);
+        return;
+      }
+
+      // LOGIN SUCCESS FLOW: Save tokens and log user in
+      if (data.token) {
+        try {
+          localStorage.setItem('pehla_visa_token', data.token);
+          if (data.refreshToken) localStorage.setItem('pehla_visa_refresh_token', data.refreshToken);
+        } catch {
+          // ignore
+        }
+      }
+
+      const userProfile: UserProfile = {
+        id: data.user.id || data.user._id,
+        name: data.user.name,
+        email: data.user.email,
+        phone: data.user.phone || '',
+        passportNumber: data.user.passportNumber || '',
+        role: data.user.role || 'USER',
+      };
+
+      onLoginSuccess(userProfile);
+    } catch (err) {
+      console.error('Auth error:', err);
+      alert('Server connection error. Please make sure backend server is running.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -61,51 +104,45 @@ export const LoginPage = ({ onLoginSuccess, onNavigateHome }: LoginPageProps) =>
           <div className="brand-logo-circle">
             <img src="/logo.png" alt="Pehla Visa" className="login-logo-img" />
           </div>
-          <h2 className="login-welcome-title">Welcome to Pehla Visa</h2>
+          <h2 className="login-welcome-title">
+            {authMode === 'login' ? 'Welcome to Pehla Visa' : 'Create New User Account'}
+          </h2>
           <p className="login-welcome-subtitle">
-            Sign in to track your visa applications, manage documents, and get express approvals.
+            {authMode === 'login'
+              ? 'Sign in to track your visa applications and access your account.'
+              : 'Register your account to save application history into MongoDB Auth schema.'}
           </p>
         </div>
 
-        {/* Quick One-Click Test Login Demo Buttons */}
-        <div className="quick-login-demo-bar">
-          <span className="demo-label">⚡ Quick One-Click Login:</span>
-          <div className="demo-btn-group">
-            <button type="button" className="quick-demo-chip" onClick={() => handleQuickLogin('Piyush')}>
-              <HiUser style={{ display: 'inline', marginRight: 4 }} /> Login as Piyush
-            </button>
-            <button type="button" className="quick-demo-chip" onClick={() => handleQuickLogin('Ananya')}>
-              <HiUser style={{ display: 'inline', marginRight: 4 }} /> Login as Ananya
-            </button>
+        {/* Registration Success Notification Banner */}
+        {successMessage && (
+          <div style={{ background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '0.85rem 1rem', borderRadius: '0.65rem', marginBottom: '1.25rem', fontSize: '0.9rem', fontWeight: 700, textAlign: 'center' }}>
+            {successMessage}
           </div>
-        </div>
+        )}
 
-        <div className="login-divider-or">
-          <span>OR ENTER YOUR DETAILS</span>
-        </div>
-
-        {/* Tab Switcher */}
+        {/* Tab Switcher: Login vs Register */}
         <div className="login-tabs-bar">
           <button
             type="button"
-            className={`login-tab ${loginMethod === 'phone' ? 'active' : ''}`}
-            onClick={() => { setLoginMethod('phone'); setOtpSent(false); }}
+            className={`login-tab ${authMode === 'login' ? 'active' : ''}`}
+            onClick={() => setAuthMode('login')}
           >
-            <HiDevicePhoneMobile style={{ display: 'inline', marginRight: 4 }} /> Mobile Number
+            <HiUser style={{ display: 'inline', marginRight: 4 }} /> Sign In
           </button>
           <button
             type="button"
-            className={`login-tab ${loginMethod === 'email' ? 'active' : ''}`}
-            onClick={() => { setLoginMethod('email'); setOtpSent(false); }}
+            className={`login-tab ${authMode === 'register' ? 'active' : ''}`}
+            onClick={() => setAuthMode('register')}
           >
-            <HiEnvelope style={{ display: 'inline', marginRight: 4 }} /> Email Address
+            <HiEnvelope style={{ display: 'inline', marginRight: 4 }} /> Register Account
           </button>
         </div>
 
-        {!otpSent ? (
-          <form onSubmit={handleSendOtp} className="login-form-body">
+        <form onSubmit={handleSubmit} className="login-form-body">
+          {authMode === 'register' && (
             <div className="login-input-group">
-              <label>Your Full Name</label>
+              <label>Full Name *</label>
               <input
                 type="text"
                 placeholder="e.g. Piyush Sharma"
@@ -114,64 +151,58 @@ export const LoginPage = ({ onLoginSuccess, onNavigateHome }: LoginPageProps) =>
                 required
               />
             </div>
+          )}
 
-            {loginMethod === 'phone' ? (
-              <div className="login-input-group">
-                <label>Mobile Number</label>
-                <div className="phone-prefix-input-row">
-                  <span className="country-code-badge">+91</span>
-                  <input
-                    type="tel"
-                    placeholder="Enter 10 digit number"
-                    maxLength={10}
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="login-input-group">
-                <label>Email Address</label>
-                <input
-                  type="email"
-                  placeholder="e.g. piyush@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-            )}
+          <div className="login-input-group">
+            <label>Email Address *</label>
+            <input
+              type="email"
+              placeholder="e.g. piyush@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
 
-            <button type="submit" className="login-submit-btn">
-              Get OTP Verification Code
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleVerifyAndLogin} className="login-form-body">
-            <div className="otp-sent-notice">
-              <span>Code sent to <strong>{loginMethod === 'phone' ? `+91 ${phone}` : email}</strong></span>
-              <button type="button" className="edit-num-btn" onClick={() => setOtpSent(false)}>Edit</button>
-            </div>
-
+          {authMode === 'register' && (
             <div className="login-input-group">
-              <label>Enter 4-Digit OTP Code</label>
+              <label>Mobile Number (Optional)</label>
               <input
-                type="text"
-                placeholder="Enter 1 2 3 4"
-                maxLength={4}
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                className="otp-center-input"
-                required
+                type="tel"
+                placeholder="e.g. +91 9876543210"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
               />
             </div>
+          )}
 
-            <button type="submit" className="login-submit-btn">
-              Verify OTP & Login Now
-            </button>
-          </form>
-        )}
+          <div className="login-input-group">
+            <label>Password *</label>
+            <input
+              type="password"
+              placeholder="Enter secure password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          {authMode === 'register' && (
+            <div className="login-input-group">
+              <label>Passport Number (Optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Z9876543"
+                value={passportNumber}
+                onChange={(e) => setPassportNumber(e.target.value.toUpperCase())}
+              />
+            </div>
+          )}
+
+          <button type="submit" className="login-submit-btn" disabled={loading}>
+            {loading ? 'Processing...' : authMode === 'login' ? 'Sign In Now' : 'Create Account Now'}
+          </button>
+        </form>
 
         {/* Back Link Footer */}
         <div className="login-card-footer">
